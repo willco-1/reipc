@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    net::Shutdown,
     os::unix::net::UnixStream,
     path::Path,
     thread::JoinHandle,
@@ -27,38 +28,50 @@ where
 
     pub fn start(
         self,
-    ) -> (
+    ) -> anyhow::Result<(
         JoinHandle<anyhow::Result<()>>,
         JoinHandle<anyhow::Result<()>>,
-    ) {
-        let mut writer = self.stream.try_clone().expect("Could not clone stream");
-        let _reader = self.stream;
+    )> {
+        let (mut ipc_writer, mut ipc_reader) = (self.stream.try_clone()?, self.stream);
+        let (manager_reader, manager_writer) = (self.manager.clone(), self.manager.clone());
 
-        let ms = self.manager.clone();
-        let _mr = self.manager.clone();
-
-        //TODO: implement receiving
         let read_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            //let mut buf = BytesMut::zeroed(1024);
-            //let r = reader.read(&mut buf);
+            let mut buf = BytesMut::zeroed(1024);
+            while let Ok(n) = ipc_reader.read(&mut buf) {
+                if n == EOF {
+                    break;
+                }
+
+                manager_writer.recv(buf.split_to(n).freeze())?;
+            }
+
+            // The intention of this lib is to mimic request - response pattern
+            // If we cannot receive any more responses, we close IPC completely
+            // Will error if socket is not connected, we don't care
+            let _ = ipc_reader.shutdown(Shutdown::Both);
             Ok(())
         });
 
         let write_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            while let Some(msg) = ms.send() {
-                writer.write_all(&msg)?;
+            while let Some(msg) = manager_reader.send() {
+                ipc_writer.write_all(&msg)?;
             }
+
+            // The intention of this lib is to mimic request - response pattern
+            // If we cannot send any more requests, we close IPC completely
+            // Will error if socket is not connected, we don't care
+            let _ = ipc_writer.shutdown(Shutdown::Both);
 
             Ok(())
         });
 
-        (read_jh, write_jh)
+        Ok((read_jh, write_jh))
     }
 }
 
 pub trait Manager {
     fn send(&self) -> Option<Bytes>;
-    fn recv(&self);
+    fn recv(&self, b: Bytes) -> anyhow::Result<()>;
 }
 
 #[cfg(test)]
@@ -74,22 +87,27 @@ mod tests {
 
     #[derive(Clone)]
     struct TestManager {
-        r: crossbeam::channel::Receiver<Bytes>,
+        to_send: crossbeam::channel::Receiver<Bytes>,
+        to_recv: crossbeam::channel::Sender<Bytes>,
     }
 
     impl TestManager {
-        fn new(r: crossbeam::channel::Receiver<Bytes>) -> Self {
-            Self { r }
+        fn new(
+            to_send: crossbeam::channel::Receiver<Bytes>,
+            to_recv: crossbeam::channel::Sender<Bytes>,
+        ) -> Self {
+            Self { to_send, to_recv }
         }
     }
 
     impl Manager for TestManager {
         fn send(&self) -> Option<Bytes> {
-            self.r.recv().ok()
+            self.to_send.recv().ok()
         }
 
-        fn recv(&self) {
-            // No-op for now.
+        fn recv(&self, b: Bytes) -> anyhow::Result<()> {
+            self.to_recv.send(b)?;
+            Ok(())
         }
     }
 
@@ -103,15 +121,22 @@ mod tests {
         let (server_tx, server_rx) = crossbeam::channel::unbounded();
         let server_thread = spawn_test_server(socket_path.clone(), server_tx);
 
-        let (send_to_ipc, receive_on_ipc) = crossbeam::channel::unbounded();
-        let ipc = Ipc::try_connect(socket_path.as_path(), TestManager::new(receive_on_ipc))?;
-        let (ipc_r_jh, ipc_w_jh) = ipc.start();
+        let (send_to_ipc, send_to_ipc_rx) = crossbeam::channel::unbounded();
+        let (recv_from_ipc_tx, recv_from_ipc) = crossbeam::channel::unbounded();
 
-        send_to_ipc.send(Bytes::from_static(b"hello_1"))?;
-        assert_eq!(server_rx.recv()?, Bytes::from_static(b"hello_1"));
+        let ipc = Ipc::try_connect(
+            socket_path.as_path(),
+            TestManager::new(send_to_ipc_rx, recv_from_ipc_tx),
+        )?;
+        let (ipc_r_jh, ipc_w_jh) = ipc.start()?;
 
-        send_to_ipc.send(Bytes::from_static(b"hello_2"))?;
-        assert_eq!(server_rx.recv()?, Bytes::from_static(b"hello_2"));
+        send_to_ipc.send(Bytes::from_static(b"ping_1"))?;
+        assert_eq!(server_rx.recv()?, Bytes::from_static(b"ping_1"));
+        assert_eq!(recv_from_ipc.recv()?, Bytes::from_static(b"pong_1"));
+
+        send_to_ipc.send(Bytes::from_static(b"ping_2"))?;
+        assert_eq!(server_rx.recv()?, Bytes::from_static(b"ping_2"));
+        assert_eq!(recv_from_ipc.recv()?, Bytes::from_static(b"pong_2"));
 
         // closes communication channels, effectively closing IPC connection
         // unless this is done, test hangs because server thread doesn't exit
@@ -136,12 +161,16 @@ mod tests {
                 .ok_or(anyhow::anyhow!("Empty stream"))??;
 
             let mut buf = BytesMut::zeroed(1024);
+            let mut msg_count = 0;
             while let Ok(n) = stream.read(&mut buf) {
+                msg_count += 1;
                 if n == EOF {
                     break;
                 }
 
                 tx.send(buf.split_to(n).freeze())?;
+                let msg = format!("pong_{msg_count}");
+                stream.write_all(&Bytes::from(msg))?;
             }
 
             Ok(())
