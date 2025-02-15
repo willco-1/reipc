@@ -4,3 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.95"
+bytes = "1.10.0"
+crossbeam = "0.8.4"
+
+[dev-dependencies]
+tempfile = "3.16.0"
+pretty_assertions = "1.4.1"
