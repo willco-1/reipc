@@ -128,18 +128,13 @@ impl ReManager {
         Ok(())
     }
     fn receive_loop(&self) -> anyhow::Result<()> {
-        while let Ok(r) = self.connection.recv() {
-            if r.is_none() {
-                self.drop_all_pending_requests();
-                break;
-            }
-
-            let r = r.unwrap();
-            if let Some((_, pending_req)) = self.requests.remove(&r.id) {
-                pending_req.send(r)?;
+        while let Ok(Some(resp)) = self.connection.recv() {
+            if let Some((_, pending_req)) = self.requests.remove(&resp.id) {
+                pending_req.send(resp)?;
             }
         }
 
+        self.drop_all_pending_requests();
         Ok(())
     }
 
