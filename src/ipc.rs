@@ -7,7 +7,7 @@ use std::{
     thread::JoinHandle,
 };
 
-use crate::re_manager::Manager;
+use crate::connection::Connection;
 
 /// Indicates closing of the IPC stream
 const EOF: usize = 0;
@@ -18,30 +18,30 @@ type IpcParallelRWResult = anyhow::Result<(
 )>;
 
 pub struct Ipc<T> {
-    manager: T,
+    connection: T,
     stream: UnixStream,
 }
 
 impl<T> Ipc<T>
 where
-    T: Manager + Send + Clone + 'static,
+    T: Connection + Send + Clone + 'static,
 {
-    pub fn try_start(path: &Path, manager: T) -> IpcParallelRWResult {
-        let ipc = Self::try_connect(path, manager)?;
+    pub fn try_start(path: &Path, connection: T) -> IpcParallelRWResult {
+        let ipc = Self::try_connect(path, connection)?;
         ipc.start()
     }
 
-    pub fn try_connect(path: &Path, manager: T) -> anyhow::Result<Self> {
+    pub fn try_connect(path: &Path, connection: T) -> anyhow::Result<Self> {
         let stream = UnixStream::connect(path)?;
 
-        Ok(Self { stream, manager })
+        Ok(Self { stream, connection })
     }
 
     pub fn start(self) -> IpcParallelRWResult {
         const INTERNAL_READ_BUF_CAPACITY: usize = 4096;
 
         let (mut ipc_writer, mut ipc_reader) = (self.stream.try_clone()?, self.stream);
-        let (manager_reader, manager_writer) = (self.manager.clone(), self.manager);
+        let (connection_w, connection_r) = (self.connection.clone(), self.connection);
 
         //Inspired by  alloy.rs async transport IPC implementation
         //https://github.com/alloy-rs/alloy/blob/main/crates/transport-ipc/src/lib.rs
@@ -62,7 +62,7 @@ where
 
                 match maybe_fully_de_json {
                     Some(Ok(response)) => {
-                        manager_writer.recv(response)?;
+                        connection_r.recv(response)?;
                     }
                     Some(Err(err)) => {
                         let unrecoverable_err = !(err.is_eof() || err.is_data());
@@ -83,7 +83,7 @@ where
         });
 
         let write_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            while let Some(msg) = manager_reader.send() {
+            while let Ok(msg) = connection_w.send() {
                 ipc_writer.write_all(&msg)?;
             }
 
@@ -113,12 +113,12 @@ mod tests {
     use tempfile::tempdir;
 
     #[derive(Clone)]
-    struct TestManager {
+    struct MockConnection {
         to_send: crossbeam::channel::Receiver<Bytes>,
         to_recv: crossbeam::channel::Sender<Response>,
     }
 
-    impl TestManager {
+    impl MockConnection {
         fn new(
             to_send: crossbeam::channel::Receiver<Bytes>,
             to_recv: crossbeam::channel::Sender<Response>,
@@ -127,13 +127,14 @@ mod tests {
         }
     }
 
-    impl Manager for TestManager {
-        fn send(&self) -> Option<Bytes> {
-            self.to_send.recv().ok()
+    impl Connection for MockConnection {
+        fn send(&self) -> anyhow::Result<Bytes> {
+            let b = self.to_send.recv()?;
+            Ok(b)
         }
 
-        fn recv(&self, b: Response) -> anyhow::Result<()> {
-            self.to_recv.send(b)?;
+        fn recv(&self, r: Response) -> anyhow::Result<()> {
+            self.to_recv.send(r)?;
             Ok(())
         }
     }
@@ -153,7 +154,7 @@ mod tests {
 
         let ipc = Ipc::try_connect(
             socket_path.as_path(),
-            TestManager::new(send_to_ipc_rx, recv_from_ipc_tx),
+            MockConnection::new(send_to_ipc_rx, recv_from_ipc_tx),
         )?;
         let (ipc_r_jh, ipc_w_jh) = ipc.start()?;
 

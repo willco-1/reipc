@@ -1,5 +1,6 @@
 use alloy_json_rpc::Response;
 use bytes::Bytes;
+use crossbeam::channel::{Receiver, Sender};
 
 //TODO:
 // This is more or less how I see this, probably missing some details, I think I got it like 80%
@@ -21,10 +22,3 @@ use bytes::Bytes;
 //  3.3 se send response to one shot channel
 //  It looks to me I'll need one more layer here one "real" manager  and smht. I inject to IPC
 //  (currently incorrectly called Manager)
-
-//TODO: improve naming
-pub trait Manager {
-    //TODO: Maybe send should also work with JSON instead of bytes?
-    fn send(&self) -> Option<Bytes>;
-    fn recv(&self, b: Response) -> anyhow::Result<()>;
-}
