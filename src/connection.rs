@@ -5,28 +5,28 @@ use crossbeam::channel::{Receiver, Sender};
 /// Connection to IPC. It allows us to send to and receive from IPC
 pub trait Connection {
     //TODO: Maybe send should also work with JSON instead of bytes?
-    fn send(&self) -> anyhow::Result<Bytes>;
-    fn recv(&self, r: Response) -> anyhow::Result<()>;
+    fn send(&self) -> anyhow::Result<Option<Bytes>>;
+    fn recv(&self, r: Option<Response>) -> anyhow::Result<()>;
 }
 
 /// Used by underlying IPC implementation to communicate with Manager
 /// It mirrors IpcConnectionHandle
 #[derive(Clone)]
 pub struct IpcConnection {
-    to_send: Receiver<Bytes>,
-    to_recv: Sender<Response>,
+    to_send: Receiver<Option<Bytes>>,
+    to_recv: Sender<Option<Response>>,
 }
 
 /// Used by Manager to communicate with IPC
 /// It mirrors IpcConnection
 #[derive(Clone)]
 pub struct IpcConnectionHandle {
-    to_send: Sender<Bytes>,
-    to_recv: Receiver<Response>,
+    to_send: Sender<Option<Bytes>>,
+    to_recv: Receiver<Option<Response>>,
 }
 
 impl IpcConnection {
-    pub fn new() -> (Self, IpcConnectionHandle) {
+    pub(crate) fn new() -> (Self, IpcConnectionHandle) {
         //send_to_ipc is used by Manager to send request to IPC
         //send_to_ipc_rx is how IPC will receive this request
         //(to actually send it to IPC)
@@ -50,25 +50,29 @@ impl IpcConnection {
 }
 
 impl Connection for IpcConnection {
-    fn send(&self) -> anyhow::Result<Bytes> {
+    fn send(&self) -> anyhow::Result<Option<Bytes>> {
         let b = self.to_send.recv()?;
         Ok(b)
     }
 
-    fn recv(&self, r: Response) -> anyhow::Result<()> {
+    fn recv(&self, r: Option<Response>) -> anyhow::Result<()> {
         self.to_recv.send(r)?;
         Ok(())
     }
 }
 
 impl IpcConnectionHandle {
-    pub(crate) fn send(&self, b: Bytes) -> anyhow::Result<()> {
+    pub(crate) fn send(&self, b: Option<Bytes>) -> anyhow::Result<()> {
         self.to_send.send(b)?;
         Ok(())
     }
 
-    pub(crate) fn recv(&self) -> anyhow::Result<Response> {
+    pub(crate) fn recv(&self) -> anyhow::Result<Option<Response>> {
         let r = self.to_recv.recv()?;
         Ok(r)
+    }
+
+    pub(crate) fn close(self) {
+        let _ = self.to_send.send(None);
     }
 }

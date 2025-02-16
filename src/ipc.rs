@@ -62,7 +62,7 @@ where
 
                 match maybe_fully_de_json {
                     Some(Ok(response)) => {
-                        connection_r.recv(response)?;
+                        connection_r.recv(Some(response))?;
                     }
                     Some(Err(err)) => {
                         let unrecoverable_err = !(err.is_eof() || err.is_data());
@@ -75,6 +75,9 @@ where
                 }
             }
 
+            //let the manager threads know server exited
+            connection_r.recv(None)?;
+
             // The intention of this lib is to mimic request - response pattern
             // If we cannot receive any more responses, we close IPC completely
             // Will error if socket is no longer (or never was) connected, we don't care
@@ -84,6 +87,10 @@ where
 
         let write_jh = std::thread::spawn(move || -> anyhow::Result<()> {
             while let Ok(msg) = connection_w.send() {
+                if msg.is_none() {
+                    break;
+                }
+                let msg = msg.unwrap();
                 ipc_writer.write_all(&msg)?;
             }
 
@@ -128,13 +135,15 @@ mod tests {
     }
 
     impl Connection for MockConnection {
-        fn send(&self) -> anyhow::Result<Bytes> {
+        fn send(&self) -> anyhow::Result<Option<Bytes>> {
             let b = self.to_send.recv()?;
-            Ok(b)
+            Ok(Some(b))
         }
 
-        fn recv(&self, r: Response) -> anyhow::Result<()> {
-            self.to_recv.send(r)?;
+        fn recv(&self, r: Option<Response>) -> anyhow::Result<()> {
+            if let Some(r) = r {
+                self.to_recv.send(r)?;
+            }
             Ok(())
         }
     }
