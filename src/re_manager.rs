@@ -120,12 +120,7 @@ impl ReManager {
         &self,
         to_send: channel::Receiver<Option<SerializedRequest>>,
     ) -> anyhow::Result<()> {
-        while let Ok(req) = to_send.recv() {
-            if req.is_none() {
-                break;
-            }
-
-            let req = req.unwrap();
+        while let Ok(Some(req)) = to_send.recv() {
             let req = req.serialized().get().to_owned().into();
             self.connection.send(Some(req))?;
         }
@@ -135,6 +130,7 @@ impl ReManager {
     fn receive_loop(&self) -> anyhow::Result<()> {
         while let Ok(r) = self.connection.recv() {
             if r.is_none() {
+                self.drop_all_pending_requests();
                 break;
             }
 
@@ -145,5 +141,20 @@ impl ReManager {
         }
 
         Ok(())
+    }
+
+    fn drop_all_pending_requests(&self) {
+        // DashMap doesn't have drain, this mimics it
+        // More info: https://github.com/xacrimon/dashmap/issues/141
+        for k in self
+            .requests
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect::<Vec<_>>()
+        {
+            if let Some((_, pending_req)) = self.requests.remove(&k) {
+                drop(pending_req);
+            }
+        }
     }
 }

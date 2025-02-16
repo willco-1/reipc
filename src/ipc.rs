@@ -86,11 +86,7 @@ where
         });
 
         let write_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            while let Ok(msg) = connection_w.send() {
-                if msg.is_none() {
-                    break;
-                }
-                let msg = msg.unwrap();
+            while let Ok(Some(msg)) = connection_w.send() {
                 ipc_writer.write_all(&msg)?;
             }
 

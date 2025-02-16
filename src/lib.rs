@@ -76,7 +76,7 @@ mod tests {
     fn test_reipc() -> anyhow::Result<()> {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_socket_reipc");
-        let server_jh = spawn_test_server(path.clone());
+        let server_jh = spawn_test_server(path.clone(), false);
         let ipc = ReIPC::try_connect(&path)?;
 
         let resp = ipc.call(make_req(1))?;
@@ -96,7 +96,29 @@ mod tests {
         Ok(())
     }
 
-    fn spawn_test_server(socket_path: PathBuf) -> thread::JoinHandle<anyhow::Result<()>> {
+    #[test]
+    fn test_reipc_server_kills_connection() -> anyhow::Result<()> {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test_socket_reipc_2");
+        let server_jh = spawn_test_server(path.clone(), true);
+        let ipc = ReIPC::try_connect(&path)?;
+
+        let resp = ipc.call(make_req(1))?;
+        assert_json_resp(&resp, &make_resp(1))?;
+
+        // Will error because server is killed
+        let resp = ipc.call(make_req(2));
+        assert!(resp.is_err());
+
+        ipc.close()?;
+        server_jh.join().unwrap()?;
+        Ok(())
+    }
+
+    fn spawn_test_server(
+        socket_path: PathBuf,
+        test_kill: bool,
+    ) -> thread::JoinHandle<anyhow::Result<()>> {
         let server_thread = thread::spawn(move || -> anyhow::Result<()> {
             let listener = UnixListener::bind(&socket_path)?;
             let mut stream = listener
@@ -107,6 +129,9 @@ mod tests {
             let mut buf = BytesMut::zeroed(1024);
             let mut msg_count = 0;
             while let Ok(n) = stream.read(&mut buf) {
+                if test_kill && msg_count >= 1 {
+                    break;
+                }
                 msg_count += 1;
                 if n == 0 {
                     break;
@@ -116,6 +141,7 @@ mod tests {
                 stream.write_all(&b)?;
             }
 
+            let _ = stream.shutdown(std::net::Shutdown::Both);
             Ok(())
         });
 
