@@ -1,4 +1,4 @@
-use std::{path::Path, thread::JoinHandle};
+use std::{path::Path, thread::JoinHandle, time::Duration};
 
 use alloy_json_rpc::{Response, SerializedRequest};
 use connection::IpcConnection;
@@ -33,6 +33,15 @@ impl ReIPC {
 
     pub fn call(&self, req: SerializedRequest) -> anyhow::Result<Response> {
         let resp = self.manager.send(req)?;
+        Ok(resp)
+    }
+
+    pub fn call_with_timeout(
+        &self,
+        req: SerializedRequest,
+        timeout: Duration,
+    ) -> anyhow::Result<Response> {
+        let resp = self.manager.send_with_timeout(req, timeout)?;
         Ok(resp)
     }
 
@@ -79,6 +88,8 @@ mod tests {
 
         //NOTE: we can add some receive timeout to "oneshot" channel
         // then we can handle server not responding
+        let resp = ipc.call_with_timeout(make_req(4), Duration::from_millis(10));
+        assert!(resp.is_err());
 
         ipc.close()?;
         server_jh.join().unwrap()?;

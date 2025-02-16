@@ -1,6 +1,7 @@
 use std::{
     sync::Arc,
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use alloy_json_rpc::{Id, Response, SerializedRequest};
@@ -87,8 +88,31 @@ impl ReManager {
         // Only insert after we are sure that it was sent (at least) to the channel
         self.requests.insert(id, s);
 
-        //TODO: mabye timeout?
         let r = r.recv()?;
+        Ok(r)
+    }
+
+    pub(crate) fn send_with_timeout(
+        &self,
+        req: SerializedRequest,
+        timeout: Duration,
+    ) -> anyhow::Result<Response> {
+        let (s, r) = channel::bounded::<Response>(1);
+        let id = req.id().clone();
+
+        self.to_send.send(Some(req))?;
+        // Only insert after we are sure that it was sent (at least) to the channel
+        self.requests.insert(id, s);
+
+        let r = match r.recv_timeout(timeout) {
+            Ok(r) => r,
+            Err(_) => {
+                //In case of timeout something is wrong kill the connection
+                self.to_send.send(None)?;
+                anyhow::bail!("timeout");
+            }
+        };
+
         Ok(r)
     }
 
