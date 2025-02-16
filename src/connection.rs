@@ -6,7 +6,7 @@ use crossbeam::channel::{Receiver, Sender};
 pub trait Connection {
     //TODO: Maybe send should also work with JSON instead of bytes?
     fn send(&self) -> anyhow::Result<Bytes>;
-    fn recv(&self, b: Response) -> anyhow::Result<()>;
+    fn recv(&self, r: Response) -> anyhow::Result<()>;
 }
 
 /// Used by underlying IPC implementation to communicate with Manager
@@ -26,7 +26,7 @@ pub struct IpcConnectionHandle {
 }
 
 impl IpcConnection {
-    fn new() -> (Self, IpcConnectionHandle) {
+    pub fn new() -> (Self, IpcConnectionHandle) {
         //send_to_ipc is used by Manager to send request to IPC
         //send_to_ipc_rx is how IPC will receive this request
         //(to actually send it to IPC)
@@ -58,5 +58,17 @@ impl Connection for IpcConnection {
     fn recv(&self, r: Response) -> anyhow::Result<()> {
         self.to_recv.send(r)?;
         Ok(())
+    }
+}
+
+impl IpcConnectionHandle {
+    pub(crate) fn send(&self, b: Bytes) -> anyhow::Result<()> {
+        self.to_send.send(b)?;
+        Ok(())
+    }
+
+    pub(crate) fn recv(&self) -> anyhow::Result<Response> {
+        let r = self.to_recv.recv()?;
+        Ok(r)
     }
 }

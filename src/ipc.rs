@@ -12,10 +12,10 @@ use crate::connection::Connection;
 /// Indicates closing of the IPC stream
 const EOF: usize = 0;
 
-type IpcParallelRWResult = anyhow::Result<(
+pub(crate) type IpcParallelRW = (
     JoinHandle<anyhow::Result<()>>,
     JoinHandle<anyhow::Result<()>>,
-)>;
+);
 
 pub struct Ipc<T> {
     connection: T,
@@ -26,7 +26,7 @@ impl<T> Ipc<T>
 where
     T: Connection + Send + Clone + 'static,
 {
-    pub fn try_start(path: &Path, connection: T) -> IpcParallelRWResult {
+    pub fn try_start(path: &Path, connection: T) -> anyhow::Result<IpcParallelRW> {
         let ipc = Self::try_connect(path, connection)?;
         ipc.start()
     }
@@ -37,7 +37,7 @@ where
         Ok(Self { stream, connection })
     }
 
-    pub fn start(self) -> IpcParallelRWResult {
+    pub fn start(self) -> anyhow::Result<IpcParallelRW> {
         const INTERNAL_READ_BUF_CAPACITY: usize = 4096;
 
         let (mut ipc_writer, mut ipc_reader) = (self.stream.try_clone()?, self.stream);
