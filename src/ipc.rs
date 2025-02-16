@@ -6,10 +6,15 @@ use std::{
     thread::JoinHandle,
 };
 
-use bytes::{Bytes, BytesMut};
+use alloy_json_rpc::Response;
+use bytes::{Buf, Bytes, BytesMut};
 
 /// Indicates closing of the IPC stream
 const EOF: usize = 0;
+type IpcParallelRWResult = anyhow::Result<(
+    JoinHandle<anyhow::Result<()>>,
+    JoinHandle<anyhow::Result<()>>,
+)>;
 
 pub struct Ipc<T> {
     manager: T,
@@ -20,34 +25,58 @@ impl<T> Ipc<T>
 where
     T: Manager + Send + Clone + 'static,
 {
+    pub fn try_start(path: &Path, manager: T) -> IpcParallelRWResult {
+        let ipc = Self::try_connect(path, manager)?;
+        ipc.start()
+    }
+
     pub fn try_connect(path: &Path, manager: T) -> anyhow::Result<Self> {
         let stream = UnixStream::connect(path)?;
 
         Ok(Self { stream, manager })
     }
 
-    pub fn start(
-        self,
-    ) -> anyhow::Result<(
-        JoinHandle<anyhow::Result<()>>,
-        JoinHandle<anyhow::Result<()>>,
-    )> {
-        let (mut ipc_writer, mut ipc_reader) = (self.stream.try_clone()?, self.stream);
-        let (manager_reader, manager_writer) = (self.manager.clone(), self.manager.clone());
+    pub fn start(self) -> IpcParallelRWResult {
+        const INTERNAL_READ_BUF_CAPACITY: usize = 4096;
 
+        let (mut ipc_writer, mut ipc_reader) = (self.stream.try_clone()?, self.stream);
+        let (manager_reader, manager_writer) = (self.manager.clone(), self.manager);
+
+        //Inspired by  alloy.rs async transport IPC implementation
+        //https://github.com/alloy-rs/alloy/blob/main/crates/transport-ipc/src/lib.rs
         let read_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            let mut buf = BytesMut::zeroed(1024);
+            let mut buf = BytesMut::zeroed(INTERNAL_READ_BUF_CAPACITY);
+
             while let Ok(n) = ipc_reader.read(&mut buf) {
                 if n == EOF {
                     break;
                 }
 
-                manager_writer.recv(buf.split_to(n).freeze())?;
+                let mut de = serde_json::Deserializer::from_slice(&buf)
+                    .into_iter::<alloy_json_rpc::Response>();
+                let maybe_fully_de_json = de.next();
+
+                // advance the buffer
+                buf.advance(de.byte_offset());
+
+                match maybe_fully_de_json {
+                    Some(Ok(response)) => {
+                        manager_writer.recv(response)?;
+                    }
+                    Some(Err(err)) => {
+                        let unrecoverable_err = !(err.is_eof() || err.is_data());
+                        if unrecoverable_err {
+                            break;
+                        }
+                    }
+                    // nothing deserialized
+                    None => {}
+                }
             }
 
             // The intention of this lib is to mimic request - response pattern
             // If we cannot receive any more responses, we close IPC completely
-            // Will error if socket is not connected, we don't care
+            // Will error if socket is no longer (or never was) connected, we don't care
             let _ = ipc_reader.shutdown(Shutdown::Both);
             Ok(())
         });
@@ -59,7 +88,7 @@ where
 
             // The intention of this lib is to mimic request - response pattern
             // If we cannot send any more requests, we close IPC completely
-            // Will error if socket is not connected, we don't care
+            // Will error if socket is no longer(or never was) connected, we don't care
             let _ = ipc_writer.shutdown(Shutdown::Both);
 
             Ok(())
@@ -69,9 +98,11 @@ where
     }
 }
 
+//TODO: improve naming
 pub trait Manager {
+    //TODO: Maybe send should also work with JSON instead of bytes?
     fn send(&self) -> Option<Bytes>;
-    fn recv(&self, b: Bytes) -> anyhow::Result<()>;
+    fn recv(&self, b: Response) -> anyhow::Result<()>;
 }
 
 #[cfg(test)]
@@ -79,6 +110,7 @@ mod tests {
     use super::*;
     use bytes::{Bytes, BytesMut};
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use std::io::Read;
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
@@ -88,13 +120,13 @@ mod tests {
     #[derive(Clone)]
     struct TestManager {
         to_send: crossbeam::channel::Receiver<Bytes>,
-        to_recv: crossbeam::channel::Sender<Bytes>,
+        to_recv: crossbeam::channel::Sender<Response>,
     }
 
     impl TestManager {
         fn new(
             to_send: crossbeam::channel::Receiver<Bytes>,
-            to_recv: crossbeam::channel::Sender<Bytes>,
+            to_recv: crossbeam::channel::Sender<Response>,
         ) -> Self {
             Self { to_send, to_recv }
         }
@@ -105,7 +137,7 @@ mod tests {
             self.to_send.recv().ok()
         }
 
-        fn recv(&self, b: Bytes) -> anyhow::Result<()> {
+        fn recv(&self, b: Response) -> anyhow::Result<()> {
             self.to_recv.send(b)?;
             Ok(())
         }
@@ -132,11 +164,17 @@ mod tests {
 
         send_to_ipc.send(Bytes::from_static(b"ping_1"))?;
         assert_eq!(server_rx.recv()?, Bytes::from_static(b"ping_1"));
-        assert_eq!(recv_from_ipc.recv()?, Bytes::from_static(b"pong_1"));
+        assert_eq!(
+            serde_json::to_string_pretty(&recv_from_ipc.recv()?)?,
+            serde_json::to_string_pretty(&make_resp(1))?
+        );
 
         send_to_ipc.send(Bytes::from_static(b"ping_2"))?;
         assert_eq!(server_rx.recv()?, Bytes::from_static(b"ping_2"));
-        assert_eq!(recv_from_ipc.recv()?, Bytes::from_static(b"pong_2"));
+        assert_eq!(
+            serde_json::to_string_pretty(&recv_from_ipc.recv()?)?,
+            serde_json::to_string_pretty(&make_resp(2))?
+        );
 
         // closes communication channels, effectively closing IPC connection
         // unless this is done, test hangs because server thread doesn't exit
@@ -169,8 +207,8 @@ mod tests {
                 }
 
                 tx.send(buf.split_to(n).freeze())?;
-                let msg = format!("pong_{msg_count}");
-                stream.write_all(&Bytes::from(msg))?;
+                let b = serde_json::to_vec(&make_resp(msg_count))?;
+                stream.write_all(&b)?;
             }
 
             Ok(())
@@ -179,5 +217,16 @@ mod tests {
         // Give the server a moment to start up.
         thread::sleep(std::time::Duration::from_millis(50));
         server_thread
+    }
+
+    fn make_resp(id: usize) -> Response {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "result": "pong",
+            "id": id
+        })
+        .to_string();
+
+        serde_json::from_str(&response).unwrap()
     }
 }
