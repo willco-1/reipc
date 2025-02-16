@@ -1,3 +1,4 @@
+use bytes::{Buf, BytesMut};
 use std::{
     io::{Read, Write},
     net::Shutdown,
@@ -6,11 +7,11 @@ use std::{
     thread::JoinHandle,
 };
 
-use alloy_json_rpc::Response;
-use bytes::{Buf, Bytes, BytesMut};
+use crate::re_manager::Manager;
 
 /// Indicates closing of the IPC stream
 const EOF: usize = 0;
+
 type IpcParallelRWResult = anyhow::Result<(
     JoinHandle<anyhow::Result<()>>,
     JoinHandle<anyhow::Result<()>>,
@@ -98,16 +99,10 @@ where
     }
 }
 
-//TODO: improve naming
-pub trait Manager {
-    //TODO: Maybe send should also work with JSON instead of bytes?
-    fn send(&self) -> Option<Bytes>;
-    fn recv(&self, b: Response) -> anyhow::Result<()>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::Response;
     use bytes::{Bytes, BytesMut};
     use pretty_assertions::assert_eq;
     use serde_json::json;
