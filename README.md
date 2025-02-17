@@ -5,4 +5,4 @@ The UDS support full duplex communication, so to leverage this, the R/W operatio
 
 
 ### Dependencies
-Uses [alloy.rs] (https://github.com/alloy-rs/alloy) for JSON-RPC 2.0 implementation ([alloy-json-rpc](https://github.com/alloy-rs/alloy/tree/main/crates/json-rpc)).
+Uses [alloy.rs](https://github.com/alloy-rs/alloy) for JSON-RPC 2.0 implementation ([alloy-json-rpc](https://github.com/alloy-rs/alloy/tree/main/crates/json-rpc)).
