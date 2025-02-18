@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let rpc_provider =
-        RpcProvider::try_connect(Path::new(&args[1]), Duration::from_millis(100).into())?;
+        RpcProvider::try_connect(Path::new(&args[1]), Duration::from_millis(50).into())?;
 
     let mut jhs = vec![];
     for _ in 0..limit {

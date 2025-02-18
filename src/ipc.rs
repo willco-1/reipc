@@ -54,42 +54,63 @@ where
 
             //prety much the same way poll_read_buff in tokio is implemented
             //https://docs.rs/tokio-util/latest/tokio_util/io/fn.poll_read_buf.html
-            loop {
-                // Get the slice of spare capacity.
+            'reader: loop {
                 let dst = buf.chunk_mut();
-                // convert it to actual slice type, ie &[u8]
+
+                // Ensure we have spare capacity to read more data.
+                let dst = if dst.len() > 0 {
+                    dst
+                } else {
+                    buf.reserve(INTERNAL_READ_BUF_CAPACITY);
+                    buf.chunk_mut()
+                };
                 let dst = unsafe { std::slice::from_raw_parts_mut(dst.as_mut_ptr(), dst.len()) };
 
-                // Read into the uninitialized slice.
+                // Read data from the IPC reader into the spare capacity.
                 let n = ipc_reader.read(dst)?;
                 if n == EOF {
                     break;
                 }
-
                 unsafe {
-                    //advance the buffer so we know how many free bytes we have
+                    // Mark the newly read bytes as initialized.
                     buf.advance_mut(n);
                 }
 
-                let mut de = serde_json::Deserializer::from_slice(&buf)
-                    .into_iter::<alloy_json_rpc::Response>();
-                let maybe_fully_de_json = de.next();
-
-                // advance the buffer
-                buf.advance(de.byte_offset());
-
-                match maybe_fully_de_json {
-                    Some(Ok(response)) => {
-                        connection_r.recv(Some(response))?;
+                // Try to deserialize as many complete messages as possible.
+                'deserializer: loop {
+                    if buf.is_empty() {
+                        break 'deserializer; // Nothing left to process go fetch more bytes
                     }
-                    Some(Err(err)) => {
-                        let unrecoverable_err = !(err.is_eof() || err.is_data());
-                        if unrecoverable_err {
-                            break;
+
+                    let mut de = serde_json::Deserializer::from_slice(&buf)
+                        .into_iter::<alloy_json_rpc::Response>();
+
+                    match de.next() {
+                        Some(Ok(response)) => {
+                            connection_r.recv(Some(response))?;
+
+                            // Remove the consumed bytes from the buffer.
+                            let consumed = de.byte_offset();
+                            buf.advance(consumed);
+                        }
+                        Some(Err(err)) => {
+                            // Check if the error is recoverable (likely due to incomplete data).
+                            let is_recoverable = err.is_eof() || err.is_data();
+                            if is_recoverable {
+                                // we errored on this read, so these bytes were part of malformed
+                                // JOSN, consume them
+                                let consumed = de.byte_offset();
+                                buf.advance(consumed);
+                                break;
+                            } else {
+                                break 'reader;
+                            }
+                        }
+                        None => {
+                            // No complete messages found, go and fetch more bytes
+                            break 'deserializer;
                         }
                     }
-                    // nothing deserialized
-                    None => {}
                 }
             }
 
