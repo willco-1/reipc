@@ -6,17 +6,23 @@ use reipc::RpcProvider;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
+    if args.len() < 2 {
         let msg =
             "Usage: reipc <ipc_path> <test_thread_count>or cargo run -- <ipc_pah> <test_thread_count>\nExample: cargo run -- ../nmc.ipc 10";
 
         panic!("{msg}");
     }
 
+    let limit = if args.len() < 3 {
+        4
+    } else {
+        args[2].parse::<usize>()?
+    };
+
     let rpc_provider = RpcProvider::try_connect(Path::new(&args[1]), None)?;
 
     let mut jhs = vec![];
-    for _ in 0..args[2].parse::<usize>()? {
+    for _ in 0..limit {
         let jh = execute_call_in_thread::<_, Block>(
             rpc_provider.clone(),
             "eth_getBlockByNumber".into(),
@@ -35,12 +41,12 @@ fn main() -> anyhow::Result<()> {
         ),
     );
 
-    let _ = jh2.join();
     jhs.into_iter().for_each(|jh| {
         if let Err(e) = jh.join().unwrap() {
             println!("{e:?}");
         }
     });
+    let _ = jh2.join().unwrap();
 
     Ok(())
 }
