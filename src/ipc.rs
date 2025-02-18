@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use std::{
     io::{Read, Write},
     net::Shutdown,
@@ -50,11 +50,25 @@ where
         //Inspired by  alloy.rs async transport IPC implementation
         //https://github.com/alloy-rs/alloy/blob/main/crates/transport-ipc/src/lib.rs
         let read_jh = std::thread::spawn(move || -> anyhow::Result<()> {
-            let mut buf = BytesMut::zeroed(INTERNAL_READ_BUF_CAPACITY);
+            let mut buf = BytesMut::with_capacity(INTERNAL_READ_BUF_CAPACITY);
 
-            while let Ok(n) = ipc_reader.read(&mut buf) {
+            //prety much the same way poll_read_buff in tokio is implemented
+            //https://docs.rs/tokio-util/latest/tokio_util/io/fn.poll_read_buf.html
+            loop {
+                // Get the slice of spare capacity.
+                let dst = buf.chunk_mut();
+                // convert it to actual slice type, ie &[u8]
+                let dst = unsafe { std::slice::from_raw_parts_mut(dst.as_mut_ptr(), dst.len()) };
+
+                // Read into the uninitialized slice.
+                let n = ipc_reader.read(dst)?;
                 if n == EOF {
                     break;
+                }
+
+                unsafe {
+                    //advance the buffer so we know how many free bytes we have
+                    buf.advance_mut(n);
                 }
 
                 let mut de = serde_json::Deserializer::from_slice(&buf)
