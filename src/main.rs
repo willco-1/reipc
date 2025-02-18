@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
         panic!("{msg}");
     }
 
-    let rpc_provider = RpcProvider::try_connect(Path::new(&args[1]))?;
+    let rpc_provider = RpcProvider::try_connect(Path::new(&args[1]), None)?;
     let block_num = rpc_provider.call_no_params::<BlockNumberOrTag>("eth_blockNumber")?;
     println!("{:?}", block_num);
 

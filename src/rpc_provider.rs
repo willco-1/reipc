@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Debug, path::Path, sync::atomic::AtomicU64};
+use std::{borrow::Cow, fmt::Debug, path::Path, sync::atomic::AtomicU64, time::Duration};
 
 use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequest};
 
@@ -7,14 +7,19 @@ use crate::ipc_transport::ReIPC;
 pub struct RpcProvider {
     id: AtomicU64,
     ipc: ReIPC,
+    default_request_timeout: Option<Duration>,
 }
 
 impl RpcProvider {
-    pub fn try_connect(path: &Path) -> anyhow::Result<Self> {
+    pub fn try_connect(
+        path: &Path,
+        default_request_timeout: Option<Duration>,
+    ) -> anyhow::Result<Self> {
         let ipc = ReIPC::try_connect(path)?;
 
         Ok(Self {
             ipc,
+            default_request_timeout,
             id: Default::default(),
         })
     }
@@ -33,7 +38,11 @@ impl RpcProvider {
         Resp: Debug + serde::de::DeserializeOwned,
     {
         let req = self.make_request(method, params);
-        let resp = self.ipc.call(req)?;
+        let resp = match self.default_request_timeout {
+            Some(d) => self.ipc.call_with_timeout(req, d)?,
+            None => self.ipc.call(req)?,
+        };
+
         RpcProvider::parse_response(resp)
     }
 
@@ -41,9 +50,7 @@ impl RpcProvider {
     where
         Resp: Debug + serde::de::DeserializeOwned,
     {
-        let req = self.make_request(method, ());
-        let resp = self.ipc.call(req)?;
-        RpcProvider::parse_response(resp)
+        self.call(method, ())
     }
 
     fn make_request<P: RpcSend>(
