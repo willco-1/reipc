@@ -1,4 +1,10 @@
-use std::{borrow::Cow, fmt::Debug, path::Path, sync::atomic::AtomicU64, time::Duration};
+use std::{
+    borrow::Cow,
+    fmt::Debug,
+    path::Path,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequest};
 
@@ -14,14 +20,16 @@ impl RpcProvider {
     pub fn try_connect(
         path: &Path,
         default_request_timeout: Option<Duration>,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Arc<Self>> {
         let ipc = ReIPC::try_connect(path)?;
 
-        Ok(Self {
+        let rpc_provider = Self {
             ipc,
             default_request_timeout,
             id: Default::default(),
-        })
+        };
+
+        Ok(Arc::new(rpc_provider))
     }
 
     pub fn close(self) -> anyhow::Result<()> {
