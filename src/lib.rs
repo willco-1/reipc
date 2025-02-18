@@ -1,4 +1,4 @@
-use std::{path::Path, thread::JoinHandle, time::Duration};
+use std::{fmt::Debug, path::Path, thread::JoinHandle, time::Duration};
 
 use alloy_json_rpc::{Response, SerializedRequest};
 use connection::IpcConnection;
@@ -8,6 +8,7 @@ use re_manager::ReManager;
 pub mod connection;
 pub mod ipc;
 pub mod re_manager;
+pub mod rpc_reqresp;
 
 pub struct ReIPC {
     manager: ReManager,
@@ -45,7 +46,7 @@ impl ReIPC {
         Ok(resp)
     }
 
-    fn close(self) -> anyhow::Result<()> {
+    pub fn close(self) -> anyhow::Result<()> {
         self.manager.close();
 
         //TODO: this is FUGLY fix it
