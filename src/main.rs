@@ -1,7 +1,7 @@
 use std::{env, path::Path};
 
 use alloy_rpc_types_eth::{Block, BlockNumberOrTag};
-use reipc::rpc_provider::RpcProvider;
+use reipc::RpcProvider;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();

@@ -2,7 +2,7 @@ use std::{borrow::Cow, fmt::Debug, path::Path, sync::atomic::AtomicU64};
 
 use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequest};
 
-use crate::re_ipc_transport::ReIPC;
+use crate::ipc_transport::ReIPC;
 
 pub struct RpcProvider {
     id: AtomicU64,
