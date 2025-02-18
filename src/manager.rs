@@ -99,6 +99,7 @@ impl ReManager {
     ) -> anyhow::Result<Response> {
         let (s, r) = channel::bounded::<Response>(1);
         let id = req.id().clone();
+        let del_id = req.id().clone();
 
         self.to_send.send(Some(req))?;
         // Only insert after we are sure that it was sent (at least) to the channel
@@ -107,8 +108,8 @@ impl ReManager {
         let r = match r.recv_timeout(timeout) {
             Ok(r) => r,
             Err(_) => {
-                //In case of timeout something is wrong kill the connection
-                self.to_send.send(None)?;
+                //In case of timeout drop the request
+                self.requests.remove(&del_id);
                 anyhow::bail!("timeout");
             }
         };

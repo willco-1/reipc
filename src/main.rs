@@ -1,4 +1,6 @@
-use std::{env, fmt::Debug, path::Path, str::FromStr, sync::Arc, thread::JoinHandle};
+use std::{
+    env, fmt::Debug, path::Path, str::FromStr, sync::Arc, thread::JoinHandle, time::Duration,
+};
 
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Block, BlockNumberOrTag, EIP1186AccountProofResponse};
@@ -19,7 +21,8 @@ fn main() -> anyhow::Result<()> {
         args[2].parse::<usize>()?
     };
 
-    let rpc_provider = RpcProvider::try_connect(Path::new(&args[1]), None)?;
+    let rpc_provider =
+        RpcProvider::try_connect(Path::new(&args[1]), Duration::from_millis(100).into())?;
 
     let mut jhs = vec![];
     for _ in 0..limit {
