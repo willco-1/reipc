@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Debug, sync::atomic::AtomicU64};
+use std::{borrow::Cow, fmt::Debug, path::Path, sync::atomic::AtomicU64};
 
 use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequest};
 
@@ -10,11 +10,13 @@ pub struct RpcProvider {
 }
 
 impl RpcProvider {
-    pub fn new(ipc: ReIPC) -> Self {
-        Self {
+    pub fn try_connect(path: &Path) -> anyhow::Result<Self> {
+        let ipc = ReIPC::try_connect(path)?;
+
+        Ok(Self {
             ipc,
             id: Default::default(),
-        }
+        })
     }
 
     pub fn close(self) -> anyhow::Result<()> {
@@ -44,7 +46,7 @@ impl RpcProvider {
         RpcProvider::parse_response(resp)
     }
 
-    pub fn make_request<P: RpcSend>(
+    fn make_request<P: RpcSend>(
         &self,
         method: impl Into<Cow<'static, str>>,
         params: P,
@@ -57,7 +59,7 @@ impl RpcProvider {
         req.try_into().unwrap()
     }
 
-    pub fn parse_response<T>(resp: Response) -> anyhow::Result<T>
+    fn parse_response<T>(resp: Response) -> anyhow::Result<T>
     where
         T: Debug + serde::de::DeserializeOwned,
     {

@@ -4,9 +4,9 @@ use alloy_json_rpc::{Response, SerializedRequest};
 
 use crate::connection::IpcConnection;
 use crate::ipc::{Ipc, IpcParallelRW};
-use crate::re_manager::ReManager;
+use crate::manager::ReManager;
 
-pub struct ReIPC {
+pub(crate) struct ReIPC {
     manager: ReManager,
     ipc_rw: IpcParallelRW,
     sjh: JoinHandle<anyhow::Result<()>>,
@@ -14,7 +14,7 @@ pub struct ReIPC {
 }
 
 impl ReIPC {
-    pub fn try_connect(path: &Path) -> anyhow::Result<ReIPC> {
+    pub(crate) fn try_connect(path: &Path) -> anyhow::Result<ReIPC> {
         let (connection, connection_handle) = IpcConnection::new();
         let ipc_rw = Ipc::try_start(path, connection)?;
         let (manager, rjh, sjh) = ReManager::start(connection_handle);
@@ -28,12 +28,12 @@ impl ReIPC {
         })
     }
 
-    pub fn call(&self, req: SerializedRequest) -> anyhow::Result<Response> {
+    pub(crate) fn call(&self, req: SerializedRequest) -> anyhow::Result<Response> {
         let resp = self.manager.send(req)?;
         Ok(resp)
     }
 
-    pub fn call_with_timeout(
+    pub(crate) fn call_with_timeout(
         &self,
         req: SerializedRequest,
         timeout: Duration,
@@ -42,7 +42,7 @@ impl ReIPC {
         Ok(resp)
     }
 
-    pub fn close(self) -> anyhow::Result<()> {
+    pub(crate) fn close(self) -> anyhow::Result<()> {
         self.manager.close();
 
         //TODO: this is FUGLY fix it

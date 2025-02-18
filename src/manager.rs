@@ -32,7 +32,7 @@ use crate::connection::IpcConnectionHandle;
 //  (currently incorrectly called Manager)
 
 #[derive(Clone)]
-pub struct ReManager {
+pub(crate) struct ReManager {
     requests: Arc<DashMap<Id, Sender<Response>>>,
     connection: IpcConnectionHandle,
 
