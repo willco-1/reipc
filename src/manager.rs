@@ -48,7 +48,7 @@ impl ReManager {
         }
     }
 
-    pub(crate) fn close(self) {
+    pub(crate) fn close(&self) {
         self.connection.close();
         let _ = self.to_send.send(None);
     }

@@ -42,15 +42,17 @@ impl ReIPC {
         Ok(resp)
     }
 
-    pub(crate) fn close(self) -> anyhow::Result<()> {
+    pub(crate) fn close(&self) -> anyhow::Result<()> {
         self.manager.close();
 
-        //TODO: this is FUGLY fix it
-        self.ipc_rw.0.join().unwrap()?;
-        self.ipc_rw.1.join().unwrap()?;
+        //TODO: IMPLEMENT THIS PROPERLY
+        //Issue (apart from the bad design) is that join takes the ownership of self
 
-        self.sjh.join().unwrap()?;
-        self.rjh.join().unwrap()?;
+        //self.ipc_rw.0.join().unwrap()?;
+        //self.ipc_rw.1.join().unwrap()?;
+        //
+        //self.sjh.join().unwrap()?;
+        //self.rjh.join().unwrap()?;
 
         Ok(())
     }

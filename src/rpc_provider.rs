@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     fmt::Debug,
+    ops::Deref,
     path::Path,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
@@ -10,7 +11,10 @@ use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequ
 
 use crate::ipc_transport::ReIPC;
 
-pub struct RpcProvider {
+#[derive(Clone)]
+pub struct RpcProvider(Arc<RpcProviderInner>);
+
+pub struct RpcProviderInner {
     id: AtomicU64,
     ipc: ReIPC,
     default_request_timeout: Option<Duration>,
@@ -20,19 +24,19 @@ impl RpcProvider {
     pub fn try_connect(
         path: &Path,
         default_request_timeout: Option<Duration>,
-    ) -> anyhow::Result<Arc<Self>> {
+    ) -> anyhow::Result<Self> {
         let ipc = ReIPC::try_connect(path)?;
 
-        let rpc_provider = Self {
+        let rpc_provider = RpcProviderInner {
             ipc,
             default_request_timeout,
             id: Default::default(),
         };
 
-        Ok(Arc::new(rpc_provider))
+        Ok(Self(Arc::new(rpc_provider)))
     }
 
-    pub fn close(self) -> anyhow::Result<()> {
+    pub fn close(&self) -> anyhow::Result<()> {
         self.ipc.close()
     }
 
@@ -88,5 +92,13 @@ impl RpcProvider {
         };
 
         anyhow::bail!("Failed to get response")
+    }
+}
+
+impl Deref for RpcProvider {
+    type Target = RpcProviderInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

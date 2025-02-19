@@ -72,7 +72,7 @@ impl IpcConnectionHandle {
         Ok(r)
     }
 
-    pub(crate) fn close(self) {
+    pub(crate) fn close(&self) {
         let _ = self.to_send.send(None);
     }
 }

@@ -4,7 +4,7 @@ use std::{
 
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Block, BlockNumberOrTag, EIP1186AccountProofResponse};
-use reipc::RpcProvider;
+use reipc::rpc_provider::RpcProvider;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -50,12 +50,15 @@ fn main() -> anyhow::Result<()> {
         }
     });
     let _ = jh2.join().unwrap();
+    if let Err(e) = rpc_provider.close() {
+        println!("{e:?}");
+    }
 
     Ok(())
 }
 
 fn execute_call_in_thread<Params, Resp>(
-    rpc_provider: Arc<RpcProvider>,
+    rpc_provider: RpcProvider,
     method: String,
     params: Params,
 ) -> JoinHandle<anyhow::Result<()>>
