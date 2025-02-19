@@ -1,12 +1,10 @@
-use std::{
-    env, fmt::Debug, path::Path, str::FromStr, sync::Arc, thread::JoinHandle, time::Duration,
-};
+use std::{env, fmt::Debug, path::Path, str::FromStr, thread::JoinHandle, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Block, BlockNumberOrTag, EIP1186AccountProofResponse};
-use reipc::rpc_provider::RpcProvider;
+use reipc::{errors::RpcError, rpc_provider::RpcProvider};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         let msg =
@@ -61,12 +59,12 @@ fn execute_call_in_thread<Params, Resp>(
     rpc_provider: RpcProvider,
     method: String,
     params: Params,
-) -> JoinHandle<anyhow::Result<()>>
+) -> JoinHandle<Result<(), RpcError>>
 where
     Params: alloy_json_rpc::RpcSend + 'static,
     Resp: Debug + serde::de::DeserializeOwned,
 {
-    std::thread::spawn(move || -> anyhow::Result<()> {
+    std::thread::spawn(move || -> Result<(), RpcError> {
         let resp = rpc_provider.call::<Params, Resp>(method, params)?;
         let separator = "===============================================================";
         println!("{:?}\n{separator}\n{separator}", resp);

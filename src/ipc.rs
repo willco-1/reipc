@@ -7,14 +7,14 @@ use std::{
     thread::JoinHandle,
 };
 
-use crate::connection::Connection;
+use crate::{connection::Connection, errors::ConnectionError};
 
 /// Indicates closing of the IPC stream
 const EOF: usize = 0;
 
 pub(crate) type IpcParallelRW = (
-    JoinHandle<anyhow::Result<()>>,
-    JoinHandle<anyhow::Result<()>>,
+    JoinHandle<Result<(), ConnectionError>>,
+    JoinHandle<Result<(), ConnectionError>>,
 );
 
 pub(crate) struct Ipc<T> {
@@ -26,18 +26,18 @@ impl<T> Ipc<T>
 where
     T: Connection + Send + Clone + 'static,
 {
-    pub(crate) fn try_start(path: &Path, connection: T) -> anyhow::Result<IpcParallelRW> {
+    pub(crate) fn try_start(path: &Path, connection: T) -> Result<IpcParallelRW, ConnectionError> {
         let ipc = Self::try_connect(path, connection)?;
         ipc.start()
     }
 
-    pub(crate) fn try_connect(path: &Path, connection: T) -> anyhow::Result<Self> {
+    pub(crate) fn try_connect(path: &Path, connection: T) -> Result<Self, ConnectionError> {
         let stream = UnixStream::connect(path)?;
 
         Ok(Self { stream, connection })
     }
 
-    pub(crate) fn start(self) -> anyhow::Result<IpcParallelRW> {
+    pub(crate) fn start(self) -> Result<IpcParallelRW, ConnectionError> {
         // Per https://eips.ethereum.org/EIPS/eip-170
         // max code size is just under 25kb
         // since the code is specific to rbuilder, I'm immediately taking 25kb
@@ -49,12 +49,12 @@ where
 
         //Inspired by  alloy.rs async transport IPC implementation
         //https://github.com/alloy-rs/alloy/blob/main/crates/transport-ipc/src/lib.rs
-        let read_jh = std::thread::spawn(move || -> anyhow::Result<()> {
+        let read_jh = std::thread::spawn(move || -> Result<(), ConnectionError> {
             let mut buf = BytesMut::with_capacity(INTERNAL_READ_BUF_CAPACITY);
 
             //prety much the same way poll_read_buff in tokio is implemented
             //https://docs.rs/tokio-util/latest/tokio_util/io/fn.poll_read_buf.html
-            'reader: loop {
+            let reader_result = 'reader: loop {
                 let dst = buf.chunk_mut();
 
                 // Ensure we have spare capacity to read more data.
@@ -69,8 +69,9 @@ where
                 // Read data from the IPC reader into the spare capacity.
                 let n = ipc_reader.read(dst)?;
                 if n == EOF {
-                    break;
+                    break 'reader Ok(());
                 }
+
                 unsafe {
                     // Mark the newly read bytes as initialized.
                     buf.advance_mut(n);
@@ -101,9 +102,9 @@ where
                                 // JOSN, consume them
                                 let consumed = de.byte_offset();
                                 buf.advance(consumed);
-                                break;
+                                break 'deserializer;
                             } else {
-                                break 'reader;
+                                break 'reader Err(ConnectionError::from(err));
                             }
                         }
                         None => {
@@ -112,7 +113,7 @@ where
                         }
                     }
                 }
-            }
+            };
 
             //let the manager threads know server exited
             connection_r.recv(None)?;
@@ -121,10 +122,10 @@ where
             // If we cannot receive any more responses, we close IPC completely
             // Will error if socket is no longer (or never was) connected, we don't care
             let _ = ipc_reader.shutdown(Shutdown::Both);
-            Ok(())
+            reader_result
         });
 
-        let write_jh = std::thread::spawn(move || -> anyhow::Result<()> {
+        let write_jh = std::thread::spawn(move || -> Result<(), ConnectionError> {
             while let Ok(Some(msg)) = connection_w.send() {
                 ipc_writer.write_all(&msg)?;
             }
@@ -143,6 +144,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::errors::ConnectionError;
+
     use super::*;
     use alloy_json_rpc::Response;
     use bytes::{Bytes, BytesMut};
@@ -170,12 +173,12 @@ mod tests {
     }
 
     impl Connection for MockConnection {
-        fn send(&self) -> anyhow::Result<Option<Bytes>> {
+        fn send(&self) -> Result<Option<Bytes>, ConnectionError> {
             let b = self.to_send.recv()?;
             Ok(Some(b))
         }
 
-        fn recv(&self, r: Option<Response>) -> anyhow::Result<()> {
+        fn recv(&self, r: Option<Response>) -> Result<(), ConnectionError> {
             if let Some(r) = r {
                 self.to_recv.send(r)?;
             }
@@ -184,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ipc_send() -> anyhow::Result<()> {
+    fn test_ipc_send() -> Result<(), Box<dyn std::error::Error>> {
         // Crates temp socket, deleted after test
         let dir = tempdir()?;
         let socket_path = dir.path().join("test_socket");
@@ -230,13 +233,10 @@ mod tests {
     fn spawn_test_server(
         socket_path: PathBuf,
         tx: crossbeam::channel::Sender<Bytes>,
-    ) -> thread::JoinHandle<anyhow::Result<()>> {
-        let server_thread = thread::spawn(move || -> anyhow::Result<()> {
+    ) -> thread::JoinHandle<Result<(), ConnectionError>> {
+        let server_thread = thread::spawn(move || -> Result<(), ConnectionError> {
             let listener = UnixListener::bind(&socket_path)?;
-            let mut stream = listener
-                .incoming()
-                .next()
-                .ok_or(anyhow::anyhow!("Empty stream"))??;
+            let mut stream = listener.incoming().next().unwrap()?;
 
             let mut buf = BytesMut::zeroed(1024);
             let mut msg_count = 0;
@@ -246,7 +246,7 @@ mod tests {
                     break;
                 }
 
-                tx.send(buf.split_to(n).freeze())?;
+                tx.send(buf.split_to(n).freeze()).unwrap();
                 let b = serde_json::to_vec(&make_resp(msg_count))?;
                 stream.write_all(&b)?;
             }

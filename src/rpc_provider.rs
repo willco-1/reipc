@@ -7,9 +7,11 @@ use std::{
     time::Duration,
 };
 
-use alloy_json_rpc::{Request, Response, ResponsePayload, RpcSend, SerializedRequest};
+use alloy_json_rpc::{
+    ErrorPayload, Request, Response, ResponsePayload, RpcSend, SerializedRequest,
+};
 
-use crate::ipc_transport::ReIPC;
+use crate::{errors::RpcError, ipc_transport::ReIPC};
 
 #[derive(Clone)]
 pub struct RpcProvider(Arc<RpcProviderInner>);
@@ -24,7 +26,7 @@ impl RpcProvider {
     pub fn try_connect(
         path: &Path,
         default_request_timeout: Option<Duration>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, RpcError> {
         let ipc = ReIPC::try_connect(path)?;
 
         let rpc_provider = RpcProviderInner {
@@ -36,15 +38,16 @@ impl RpcProvider {
         Ok(Self(Arc::new(rpc_provider)))
     }
 
-    pub fn close(&self) -> anyhow::Result<()> {
-        self.ipc.close()
+    pub fn close(&self) -> Result<(), RpcError> {
+        let _ = self.ipc.close()?;
+        Ok(())
     }
 
     pub fn call<ReqParams, Resp>(
         &self,
         method: impl Into<Cow<'static, str>>,
         params: ReqParams,
-    ) -> anyhow::Result<Resp>
+    ) -> Result<Resp, RpcError>
     where
         ReqParams: RpcSend,
         Resp: Debug + serde::de::DeserializeOwned,
@@ -58,7 +61,10 @@ impl RpcProvider {
         RpcProvider::parse_response(resp)
     }
 
-    pub fn call_no_params<Resp>(&self, method: impl Into<Cow<'static, str>>) -> anyhow::Result<Resp>
+    pub fn call_no_params<Resp>(
+        &self,
+        method: impl Into<Cow<'static, str>>,
+    ) -> Result<Resp, RpcError>
     where
         Resp: Debug + serde::de::DeserializeOwned,
     {
@@ -78,20 +84,30 @@ impl RpcProvider {
         req.try_into().unwrap()
     }
 
-    fn parse_response<T>(resp: Response) -> anyhow::Result<T>
+    pub fn parse_response<T>(resp: Response) -> Result<T, RpcError>
     where
         T: Debug + serde::de::DeserializeOwned,
     {
-        if let ResponsePayload::Success(_) = resp.payload {
-            if let Some(Ok(data)) = resp.try_success_as::<T>() {
-                return Ok(data);
-            } else {
-                //TODO: add tracing crate
-                //println!("Failed to deserialize success payload");
+        match resp.payload {
+            ResponsePayload::Success(_) => {
+                match resp.try_success_as::<T>() {
+                    Some(Ok(r)) => Ok(r),
+                    Some(Err(e)) => Err(e.into()),
+                    // the response was received successfully, but it contains Err payload
+                    // we shouldn't have  ended up here
+                    None => Err(RpcError::JsonErrPayloadMisinterpretedAsSuccess),
+                }
             }
-        };
-
-        anyhow::bail!("Failed to get response")
+            ResponsePayload::Failure(_) => {
+                match resp.try_error_as::<ErrorPayload>() {
+                    Some(Ok(err_payload)) => Err(RpcError::ServerError(err_payload.into())),
+                    Some(Err(e)) => Err(e.into()),
+                    // the response was received successfully, but it contains Success payload
+                    // we shouldn't have ended up here
+                    None => Err(RpcError::JsonSuccessPayloadMisinterpretedAsError),
+                }
+            }
+        }
     }
 }
 

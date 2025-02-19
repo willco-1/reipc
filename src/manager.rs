@@ -8,7 +8,7 @@ use alloy_json_rpc::{Id, Response, SerializedRequest};
 use crossbeam::channel::{self, Sender};
 use dashmap::DashMap;
 
-use crate::connection::IpcConnectionHandle;
+use crate::{connection::IpcConnectionHandle, errors::TransportError};
 
 //TODO:
 // This is more or less how I see this, probably missing some details, I think I got it like 80%
@@ -57,8 +57,8 @@ impl ReManager {
         connection: IpcConnectionHandle,
     ) -> (
         Self,
-        JoinHandle<anyhow::Result<()>>,
-        JoinHandle<anyhow::Result<()>>,
+        JoinHandle<Result<(), TransportError>>,
+        JoinHandle<Result<(), TransportError>>,
     ) {
         let (sender, receiver) = channel::unbounded();
         let manager = ReManager::new(connection, sender);
@@ -66,12 +66,12 @@ impl ReManager {
         let (rec, send) = (manager.clone(), manager.clone());
 
         //TODO: this needs better handling I ended up heare because ReManager needs new to_send
-        let rec_jh = thread::spawn(move || -> anyhow::Result<()> {
+        let rec_jh = thread::spawn(move || -> Result<(), TransportError> {
             rec.receive_loop()?;
             Ok(())
         });
 
-        let send_jh = thread::spawn(move || -> anyhow::Result<()> {
+        let send_jh = thread::spawn(move || -> Result<(), TransportError> {
             send.send_loop(receiver)?;
             Ok(())
         });
@@ -80,7 +80,7 @@ impl ReManager {
         (manager, rec_jh, send_jh)
     }
 
-    pub(crate) fn send(&self, req: SerializedRequest) -> anyhow::Result<Response> {
+    pub(crate) fn send(&self, req: SerializedRequest) -> Result<Response, TransportError> {
         let (s, r) = channel::bounded::<Response>(1);
         let id = req.id().clone();
 
@@ -96,7 +96,7 @@ impl ReManager {
         &self,
         req: SerializedRequest,
         timeout: Duration,
-    ) -> anyhow::Result<Response> {
+    ) -> Result<Response, TransportError> {
         let (s, r) = channel::bounded::<Response>(1);
         let id = req.id().clone();
         let del_id = req.id().clone();
@@ -107,10 +107,11 @@ impl ReManager {
 
         let r = match r.recv_timeout(timeout) {
             Ok(r) => r,
-            Err(_) => {
+            Err(e) => {
+                //TODO: add retry logic
                 //In case of timeout drop the request
                 self.requests.remove(&del_id);
-                anyhow::bail!("timeout");
+                return Err(e.into());
             }
         };
 
@@ -120,7 +121,7 @@ impl ReManager {
     fn send_loop(
         &self,
         to_send: channel::Receiver<Option<SerializedRequest>>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), TransportError> {
         while let Ok(Some(req)) = to_send.recv() {
             let req = req.serialized().get().to_owned().into();
             self.connection.send(Some(req))?;
@@ -128,7 +129,7 @@ impl ReManager {
 
         Ok(())
     }
-    fn receive_loop(&self) -> anyhow::Result<()> {
+    fn receive_loop(&self) -> Result<(), TransportError> {
         while let Ok(Some(resp)) = self.connection.recv() {
             if let Some((_, pending_req)) = self.requests.remove(&resp.id) {
                 pending_req.send(resp)?;

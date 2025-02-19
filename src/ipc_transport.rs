@@ -3,18 +3,19 @@ use std::{path::Path, thread::JoinHandle, time::Duration};
 use alloy_json_rpc::{Response, SerializedRequest};
 
 use crate::connection::IpcConnection;
+use crate::errors::TransportError;
 use crate::ipc::{Ipc, IpcParallelRW};
 use crate::manager::ReManager;
 
 pub(crate) struct ReIPC {
     manager: ReManager,
     ipc_rw: IpcParallelRW,
-    sjh: JoinHandle<anyhow::Result<()>>,
-    rjh: JoinHandle<anyhow::Result<()>>,
+    sjh: JoinHandle<Result<(), TransportError>>,
+    rjh: JoinHandle<Result<(), TransportError>>,
 }
 
 impl ReIPC {
-    pub(crate) fn try_connect(path: &Path) -> anyhow::Result<ReIPC> {
+    pub(crate) fn try_connect(path: &Path) -> Result<ReIPC, TransportError> {
         let (connection, connection_handle) = IpcConnection::new();
         let ipc_rw = Ipc::try_start(path, connection)?;
         let (manager, rjh, sjh) = ReManager::start(connection_handle);
@@ -28,7 +29,7 @@ impl ReIPC {
         })
     }
 
-    pub(crate) fn call(&self, req: SerializedRequest) -> anyhow::Result<Response> {
+    pub(crate) fn call(&self, req: SerializedRequest) -> Result<Response, TransportError> {
         let resp = self.manager.send(req)?;
         Ok(resp)
     }
@@ -37,12 +38,12 @@ impl ReIPC {
         &self,
         req: SerializedRequest,
         timeout: Duration,
-    ) -> anyhow::Result<Response> {
+    ) -> Result<Response, TransportError> {
         let resp = self.manager.send_with_timeout(req, timeout)?;
         Ok(resp)
     }
 
-    pub(crate) fn close(&self) -> anyhow::Result<()> {
+    pub(crate) fn close(&self) -> Result<(), TransportError> {
         self.manager.close();
 
         //TODO: IMPLEMENT THIS PROPERLY
@@ -60,9 +61,11 @@ impl ReIPC {
 
 #[cfg(test)]
 mod tests {
+    use crate::errors::ConnectionError;
+
     use super::*;
     use alloy_json_rpc::{Request, Response};
-    use bytes::{Bytes, BytesMut};
+    use bytes::BytesMut;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::io::{Read, Write};
@@ -72,7 +75,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_reipc() -> anyhow::Result<()> {
+    fn test_reipc() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_socket_reipc");
         let server_jh = spawn_test_server(path.clone(), false);
@@ -96,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reipc_server_kills_connection() -> anyhow::Result<()> {
+    fn test_reipc_server_kills_connection() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_socket_reipc_2");
         let server_jh = spawn_test_server(path.clone(), true);
@@ -117,13 +120,10 @@ mod tests {
     fn spawn_test_server(
         socket_path: PathBuf,
         test_kill: bool,
-    ) -> thread::JoinHandle<anyhow::Result<()>> {
-        let server_thread = thread::spawn(move || -> anyhow::Result<()> {
-            let listener = UnixListener::bind(&socket_path)?;
-            let mut stream = listener
-                .incoming()
-                .next()
-                .ok_or(anyhow::anyhow!("Empty stream"))??;
+    ) -> thread::JoinHandle<Result<(), ConnectionError>> {
+        let server_thread = thread::spawn(move || -> Result<(), ConnectionError> {
+            let listener = UnixListener::bind(&socket_path).unwrap();
+            let mut stream = listener.incoming().next().unwrap()?;
 
             let mut buf = BytesMut::zeroed(1024);
             let mut msg_count = 0;
@@ -136,7 +136,7 @@ mod tests {
                     break;
                 }
 
-                let b = serde_json::to_vec(&make_resp(msg_count))?;
+                let b = serde_json::to_vec(&make_resp(msg_count)).unwrap();
                 stream.write_all(&b)?;
             }
 
@@ -172,7 +172,7 @@ mod tests {
         req.try_into().unwrap()
     }
 
-    fn assert_json_resp(r1: &Response, r2: &Response) -> anyhow::Result<()> {
+    fn assert_json_resp(r1: &Response, r2: &Response) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             serde_json::to_string_pretty(r1)?,
             serde_json::to_string_pretty(r2)?
