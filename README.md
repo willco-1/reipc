@@ -7,5 +7,10 @@ This is alpha-level quality. I wanted this ASAP, so it is not up to _the standar
 Not well tested.
 If we realize this is useful, might nuke this specific repo and do it from scratch properly :)
 
+# HIGH-LEVEL OVERIVEW
+![reipc_high_level_overivew](https://github.com/user-attachments/assets/e654e5b7-eb71-4c69-9756-cd98ac461af6)
+
+
+
 ### Dependencies
 Uses [alloy.rs](https://github.com/alloy-rs/alloy) for JSON-RPC 2.0 implementation ([alloy-json-rpc](https://github.com/alloy-rs/alloy/tree/main/crates/json-rpc)).
