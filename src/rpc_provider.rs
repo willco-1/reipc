@@ -13,9 +13,10 @@ use alloy_json_rpc::{
 
 use crate::{errors::RpcError, ipc_transport::ReIPC};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RpcProvider(Arc<RpcProviderInner>);
 
+#[derive(Debug)]
 pub struct RpcProviderInner {
     id: AtomicU64,
     ipc: ReIPC,
@@ -39,7 +40,7 @@ impl RpcProvider {
     }
 
     pub fn close(&self) -> Result<(), RpcError> {
-        let _ = self.ipc.close()?;
+        self.ipc.close()?;
         Ok(())
     }
 

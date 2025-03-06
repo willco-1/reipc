@@ -7,6 +7,7 @@ use crate::errors::TransportError;
 use crate::ipc::{Ipc, IpcParallelRW};
 use crate::manager::ReManager;
 
+#[derive(Debug)]
 pub(crate) struct ReIPC {
     manager: ReManager,
     ipc_rw: IpcParallelRW,

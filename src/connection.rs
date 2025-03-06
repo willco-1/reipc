@@ -13,7 +13,7 @@ pub trait Connection {
 
 /// Used by underlying IPC implementation to communicate with Manager
 /// It mirrors IpcConnectionHandle
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IpcConnection {
     to_send: Receiver<Option<Bytes>>,
     to_recv: Sender<Option<Response>>,
@@ -21,7 +21,7 @@ pub struct IpcConnection {
 
 /// Used by Manager to communicate with IPC
 /// It mirrors IpcConnection
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IpcConnectionHandle {
     to_send: Sender<Option<Bytes>>,
     to_recv: Receiver<Option<Response>>,
